@@ -1,11 +1,8 @@
 # 🧹 mac-cleanup
 
-Reclaim disk space on macOS without being surprised by what gets deleted.
+![screenshot](docs/screenshot.png)
 
-`mac-cleanup` scans 19 areas of my Mac (caches, WhatsApp, Docker, Xcode, editors,
-Claude, dev toolchains, …), shows what can be freed, and lets you review each area in a
-checkbox list before anything is deleted. It's a single bash file and needs nothing beyond
-what ships with macOS.
+`mac-cleanup` scans 19 areas of my Mac (caches, WhatsApp, Docker, Xcode, editors, Claude, dev toolchains, …), shows what can be freed, and lets you review each area in a checkbox list before anything is deleted. It's a single bash file and needs nothing beyond what ships with macOS.
 
 ```
 mac-cleanup 3.0.0 — Disk: 144Gi used of 228Gi, 56Gi free (72%)
