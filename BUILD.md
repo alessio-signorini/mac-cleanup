@@ -92,6 +92,9 @@ src/
     backups.sh system.sh report.sh
 tests/
   run.sh                self-contained test suite (fake $HOME), exit 0 = pass
+  fixtures.sh           make_home: the fake $HOME used by run.sh and dev/sandbox.sh
+dev/
+  sandbox.sh            runs the tool/tests against a fake $HOME under a Seatbelt sandbox
 legacy/
   mac-disk-cleanup-v2.sh   reference implementation (read-only; used for parity checks)
   cleanup.sh               v1 (historical)
@@ -473,6 +476,9 @@ Required cases:
     (`\r`, space, `\r`, `y`) — ticked item deleted, result line present; then `\003` (Ctrl-C)
     → log contains `ESC[?1049l` and `ESC[?25h` (screen/cursor restored), nothing deleted.
     macOS has no `timeout(1)`; keystroke sequences must let the program exit on its own.
+
+The fake home lives in `tests/fixtures.sh` (`make_home`), shared with `dev/sandbox.sh`.
+The whole suite also runs inside the sandbox: `dev/sandbox.sh --exec tests/run.sh --tui`.
 
 ---
 
