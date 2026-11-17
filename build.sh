@@ -30,7 +30,7 @@ strip() {
 {
   echo '#!/bin/bash'
   echo "# mac-cleanup $VERSION — built $(date '+%Y-%m-%d %H:%M') from src/ by build.sh"
-  echo '# GENERATED FILE — edit src/ and run ./build.sh. See BUILD.md / README.md.'
+  echo '# GENERATED FILE — edit src/ and run ./build.sh. See docs/BUILD.md / README.md.'
   echo '# shellcheck disable=SC2034,SC2154'
   for f in src/core/*.sh; do
     printf '\n# ==== %s\n' "$f"; strip "$f"

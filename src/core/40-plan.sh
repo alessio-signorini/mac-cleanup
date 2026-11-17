@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2034
 # The plan: items (deletable candidates) and notes, filled by module scans.
-# See BUILD.md §5 for the contract.
+# See docs/BUILD.md §5 for the contract.
 
 IT_MOD=(); IT_TIER=(); IT_ID=(); IT_LABEL=(); IT_KB=(); IT_SZ=(); IT_ACT=()
 IT_MEAS=(); IT_GRP=(); IT_GSEQ=(); IT_SEL=(); IT_RES=()

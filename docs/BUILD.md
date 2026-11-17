@@ -69,8 +69,12 @@ Other rules:
 ## 3. Repository layout
 
 ```
-BUILD.md                this file
-README.md               user documentation
+AGENTS.md               orientation for coding agents
+README.md               GitHub landing page (overview, install, quick usage)
+docs/
+  BUILD.md              this file
+  USAGE.md              full user documentation (options, review flow, tiers, safety)
+  DEVELOPMENT.md        contributor guide (layout, tests, sandbox)
 VERSION                 semantic version, e.g. 3.0.0
 build.sh                produces dist/mac-cleanup
 .gitignore              dist/
@@ -520,7 +524,7 @@ The whole suite also runs inside the sandbox: `dev/sandbox.sh --exec tests/run.s
 5. Port the remaining modules in `MC_ALL_MODULES` order (§9). After each: `bash -n`, dry-run
    `--only <m>`, compare with legacy.
 6. `60-picker.sh` TUI, then text fallback.
-7. `tests/run.sh` (§10), `README.md`.
+7. `tests/run.sh` (§10), `README.md`, `docs/USAGE.md`, `docs/DEVELOPMENT.md`.
 8. Final: `./build.sh && tests/run.sh`.
 
 ## 13. Pitfalls
