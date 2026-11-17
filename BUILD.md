@@ -19,8 +19,9 @@ if you are extending, read §4–§7 and use `src/modules/caches.sh` as the refe
    - dev:   `./src/modules/whatsapp.sh --apply`
 2. **Coordinated output.** Scan everything first, then review module by module. In an
    interactive terminal each module is reviewed in a full-screen checkbox picker (alternate
-   screen). When the user confirms, the picker disappears, the selection is applied, and only
-   a single result line per module remains on the main screen.
+   screen). Review and apply stay on that alternate screen (pickers, then an in-screen progress
+   view while deleting) until every module is done; then the main screen gets one result line
+   per module.
 3. **Single executable.** `./build.sh` concatenates core + modules + entry point into
    `dist/mac-cleanup` (one bash file, no external files needed at runtime).
 4. **No dependencies.** Runtime uses only what ships with macOS 26+: `/bin/bash` 3.2, BSD
@@ -119,12 +120,16 @@ mc_main "$@"
   mc_init              refuse root, mktemp MC_TMP, traps, ui_init, apps_init, resolve active modules
   disk_banner          "Disk: 412Gi used of 460Gi, 48Gi free (90%)" (+ DRY-RUN banner, + running apps warning)
   scan_all             for each active module: MOD_CUR=m; ${m}_scan   (progress line on stderr)
+                       (with --apply, report modules are skipped here and scanned after applying)
   then ONE of:
     dry-run            print each module section (items + notes), overview table, summary
     --apply --yes      apply pre-selected (safe) items of every module; one result line each
     --apply (TUI)      module picker → per-module item picker → apply → one result line each
     --apply (no TUI)   per-module numbered list + typed selection → apply → one result line each
-  report modules       (MOD_REPORT=1, i.e. `report`) print their notes at the end, any mode
+  report modules       (MOD_REPORT=1, i.e. `report`) print their notes at the end, any mode;
+                       with --apply they are scanned only now (so they reflect what was deleted)
+                       and only if named in --only, or the user presses y at a 10s prompt
+                       (`want_report`); non-interactive applies skip them
   summary              freed / free-space delta / history log path
 ```
 
@@ -322,8 +327,14 @@ Then `report` module notes, then summary (`safe tier ≈ X`, `review lists up to
      **a** all, **n** none, **Enter** confirm, **q** / Esc skip module, **?** toggles help.
    - On Enter, if the selection contains any `pick` item: footer asks
      `Delete N picked items (X)? y/N` — only `y` confirms.
-3. After the picker closes (back on the main screen), the selection is applied with a
-   progress line `applying 3/12  label…`, then replaced by **one result line**:
+3. The whole review+apply phase is **one alternate-screen session** (`TUI_HOLD=true`): the
+   module picker, every item picker and the apply progress all draw in it. The screen only
+   changes when there is a new question (next module). After the item picker confirms, the
+   deletion runs **in that same list** (`PK_APPLYING`): the current row turns red `busy`, done
+   rows become dim red, struck-through `gone` (or yellow `FAIL`), the cursor follows the
+   current row, and the footer shows `Deleting [####----] 3/12 · freed X` plus the current item.
+   The finished list stays visible for 1s. Result lines are buffered (`emit`) and printed on
+   the main screen, under `== RESULTS ==`, once the session ends:
 
 ```
   ✔ Caches & logs                freed 3.2GB  (14 item(s))
@@ -336,8 +347,8 @@ Then `report` module notes, then summary (`safe tier ≈ X`, `review lists up to
    folded into the single `nothing to clean:` line, **unless** they have `warn` notes (e.g. the
    WhatsApp safety stop): then they get their own `·` line followed by those warnings.
    `-v/--verbose` additionally prints each applied item and the module's notes under it.
-4. Ctrl-C at any time: restore terminal, print `interrupted`, print summary of what was
-   already applied, exit 130.
+4. Ctrl-C at any time: leave the alternate screen, restore the terminal, print the buffered
+   result lines, `interrupted`, the summary of what was already applied, and exit 130.
 
 The terminal MUST always be restored (stty, cursor, alternate screen) via `trap … EXIT INT TERM`.
 
@@ -449,7 +460,7 @@ prunes, sanity stops). Changes from v2 are marked **CHANGE**.
 | models | Local LLM models | `want models` | `~/.omlx/cache` (safe); each model dir with last-used date (pick) | |
 | backups | iOS device backups | `want backups` | each backup with device name + date via PlistBuddy (pick) | |
 | system | System-level (sudo) | `want system` | `/Library/Caches`, DiagnosticReports, system CoreSimulator caches (safe, `system_del_contents` via sudo); rotated logs > 7d (safe_cmd); **CHANGE** thin Time Machine local snapshots (pick) | MOD_OPTIN=1, enabled by `--system`; info notes: local snapshot list |
-| report | Where else is space going | `want report` | none | MOD_REPORT=1; report notes: top 6 of Application Support/Containers/Group Containers, files > 1GB in home (excluding colima, omlx, MobileSync, Mobile Documents) |
+| report | Where else is space going | `want report` | none | MOD_REPORT=1; scanned after applying when `--apply` (see §4.1); report notes: top 6 of Application Support/Containers/Group Containers by size **not already listed** by other modules (`plan_covered`: items not applied — kept/unselected — are subtracted; entries < 10MB hidden; `(+X listed above)` suffix), files > 1GB in home not inside a listed item (excluding colima, omlx, MobileSync, Mobile Documents) |
 
 ---
 
@@ -471,9 +482,15 @@ Required cases:
 8. Text fallback selection: `--apply --no-tui --only downloads` with input `n` deletes nothing; with `1` deletes the largest item only; `q` skips; EOF applies pre-selected safe items.
 9. `--list` lists all 19 modules; unknown module → exit 1; non-numeric `--days` → exit 1.
 10. Dev entry (`src/main.sh`) and built file produce identical dry-run reports.
-11. `tests/run.sh --tui` (opt-in, ~15s): drives the picker through a pseudo-terminal with
+11. Report: after `--apply --yes --only claude,report` it shows `~/Library/Application Support/Claude`
+    at its post-delete size; in dry-run it leaves out MobileSync when `backups` lists the backup;
+    a non-interactive apply that doesn't name `report` doesn't scan it.
+    List items: `--only caches,apps` with input `1`/`n` deletes the `~/Library/Caches` children only
+    (each list item has its own list file).
+12. `tests/run.sh --tui` (opt-in, ~15s): drives the picker through a pseudo-terminal with
     `script -q LOG dist/mac-cleanup --apply --only downloads`, piping timed keystrokes
-    (`\r`, space, `\r`, `y`) — ticked item deleted, result line present; then `\003` (Ctrl-C)
+    (`\r`, space, `\r`, `y`) — ticked item deleted, result line present after the single
+    `ESC[?1049l`, exactly one `ESC[?1049h` (one alternate-screen session); then `\003` (Ctrl-C)
     → log contains `ESC[?1049l` and `ESC[?25h` (screen/cursor restored), nothing deleted.
     macOS has no `timeout(1)`; keystroke sequences must let the program exit on its own.
 
@@ -519,3 +536,6 @@ The whole suite also runs inside the sandbox: `dev/sandbox.sh --exec tests/run.s
   name in bash 3.2 → always brace: `"${shown}…"`.
 - docker's container template has no `.CreatedSince`; use `.RunningFor`.
 - Module scan functions run in the main shell (not subshells) so they can append to the item arrays. Never pipe into a `while` loop that calls `mc_item`; use `done < file` or `done < <(cmd)`.
+- Same for any function that updates a counter/global: `x=$(fn)` runs `fn` in a subshell. `mc_listfile`
+  sets `LIST_FILE` instead of printing, because `list=$(mc_listfile)` once made every list item share
+  `list.1` (each item then deleted the last-written list).

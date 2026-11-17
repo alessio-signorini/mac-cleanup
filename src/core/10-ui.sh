@@ -5,14 +5,16 @@
 IS_TTY=false
 ERR_TTY=false
 TUI=false
-BOLD=""; DIM=""; RED=""; GRN=""; YLW=""; CYN=""; RST=""; REV=""
+TUI_HOLD=false      # apply phase owns the alternate screen: pickers don't leave it, output is buffered
+RES_BUF=""          # result lines buffered while TUI_HOLD, printed on the main screen afterwards
+BOLD=""; DIM=""; RED=""; GRN=""; YLW=""; CYN=""; RST=""; REV=""; STRIKE=""
 
 ui_init() {
   [ -t 1 ] && IS_TTY=true
   [ -t 2 ] && ERR_TTY=true
   if $IS_TTY && [ -z "${NO_COLOR:-}" ]; then
     BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GRN=$'\033[32m'
-    YLW=$'\033[33m'; CYN=$'\033[36m'; RST=$'\033[0m'; REV=$'\033[7m'
+    YLW=$'\033[33m'; CYN=$'\033[36m'; RST=$'\033[0m'; REV=$'\033[7m'; STRIKE=$'\033[9m'
   fi
   if $IS_TTY && [ -t 0 ] && ! $NO_TUI && [ "${TERM:-dumb}" != dumb ] && [ -r /dev/tty ]; then
     TUI=true
@@ -42,9 +44,17 @@ term_lines() {
   echo "$l"
 }
 
-# Self-overwriting status line on stderr (TTY only).
-progress() { $ERR_TTY && printf '\r\033[K%s%s%s' "$DIM" "$1" "$RST" >&2; return 0; }
-progress_done() { $ERR_TTY && printf '\r\033[K' >&2; return 0; }
+# Self-overwriting status line on stderr (TTY only; silent while the TUI holds the screen).
+progress() { $ERR_TTY && ! $TUI_HOLD && printf '\r\033[K%s%s%s' "$DIM" "$1" "$RST" >&2; return 0; }
+progress_done() { $ERR_TTY && ! $TUI_HOLD && printf '\r\033[K' >&2; return 0; }
+
+# emit TEXT: print a result line now, or buffer it while the TUI holds the alternate screen.
+emit() {
+  [ -n "$1" ] || return 0
+  if $TUI_HOLD; then RES_BUF+="$1"$'\n'; else printf '%s\n' "$1"; fi
+}
+
+emit_flush() { [ -n "$RES_BUF" ] && printf '%s' "$RES_BUF"; RES_BUF=""; return 0; }
 
 pretty() { case "$1" in "$H"/*) printf '~%s' "${1#"$H"}" ;; "$H") printf '~' ;; *) printf '%s' "$1" ;; esac; }
 urldecode() { printf '%b' "${1//%/\\x}"; }

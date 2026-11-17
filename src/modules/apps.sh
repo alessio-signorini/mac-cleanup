@@ -27,7 +27,7 @@ apps_scan() {
   # one safe item per app root, so a single app can be unticked
   while IFS=$'\t' read -r tk r; do
     [ -n "$r" ] || continue
-    list=$(mc_listfile)
+    mc_listfile; list="$LIST_FILE"
     awk -F'\t' -v r="$r" '$1==r{print $3}' "$MC_TMP/apps_found" > "$list"
     mc_item safe "$list" "$r caches" "$tk" del_listed_contents "" "@$list"
   done < <(awk -F'\t' '{s[$1]+=$2} END{for(r in s) print s[r]"\t"r}' "$MC_TMP/apps_found" | sort -rn)

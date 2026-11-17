@@ -93,6 +93,30 @@ check "pick items untouched (claude history, downloads, node_modules)" \
 check "result line + freed summary" '[[ "$out" == *"✔ Caches & logs"*"freed"* && "$out" == *"freed ≈"* ]]' "$out"
 check "history log written" '[ -s "$FH/.local/state/mac-disk-cleanup/history.log" ]'
 
+echo "== list items keep separate lists"
+make_home "$FH"
+mkf "$FH/Library/Application Support/FooApp/Cache/blob" 2048
+out=$(printf '1\nn\n' | run_bin --apply --no-tui --only caches,apps)
+check "~/Library/Caches item deletes its own children" 'gone "$FH/Library/Caches/com.example.app"' "$out"
+check "unselected app-cache list item untouched" 'exists "$FH/Library/Application Support/FooApp/Cache/blob"' "$out"
+
+echo "== report"
+make_home "$FH"
+mkf "$FH/Library/Application Support/Claude/claude-code/0.9/bin" 8192 old
+mkf "$FH/Library/Application Support/Claude/claude-code/1.0/bin" 12288
+out=$(run_bin --apply --yes --only claude,report)
+check "superseded Claude bundle removed" 'gone "$FH/Library/Application Support/Claude/claude-code/0.9"' "$out"
+check "report measures Application Support after deleting" \
+  '[[ "$out" == *"12.0MB  ~/Library/Application Support/Claude"* && "$out" != *"20.0MB  ~/Library/Application Support/Claude"* ]]' "$out"
+mkf "$FH/Library/Application Support/MobileSync/Backup/0000-AAAA/blob" 20480
+mkf "$FH/Library/Application Support/BigApp/data" 15360
+out=$(run_bin --only backups,report)
+check "report leaves out what modules listed (iOS backup), keeps the rest" \
+  '[[ "$out" == *"15.0MB  ~/Library/Application Support/BigApp"* && "$out" != *"MB  ~/Library/Application Support/MobileSync"* ]]' "$out"
+others=$("$BIN" --list | awk '{print $1}' | grep -vx -e caches -e report | paste -sd, -)
+out=$(run_bin --apply --yes --skip "$others")
+check "non-interactive apply skips the report unless named" '[[ "$out" == *"SUMMARY"* && "$out" != *"Where else"* ]]' "$out"
+
 echo "== running-app protection"
 make_home "$FH"
 out=$(HOME="$FH" MC_RUNNING_OVERRIDE=com.google.Chrome "$BIN" --apply --yes --only caches 2>&1)
@@ -140,6 +164,12 @@ if [ "${1:-}" = "--tui" ]; then
   check "TUI: tick + enter + y deletes only the ticked item" 'gone "$FH/Downloads/older.zip" && exists "$FH/Downloads/old.dmg"' \
     "$(tr '\r' '\n' < "$log" | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' | tail -8)"
   check "TUI: one result line left on the main screen" 'grep -q "✔ Old installers" "$log"'
+  check "TUI: pickers and apply share one alternate-screen session" \
+    '[ "$(grep -o $'"'"'\x1b\[?1049h'"'"' "$log" | wc -l | tr -d " ")" -eq 1 ]'
+  check "TUI: deletion shown live in the picker (busy/gone rows, Deleting footer)" \
+    'grep -q "Deleting" "$log" && grep -q "gone" "$log"'
+  check "TUI: result line printed after leaving the alternate screen" \
+    '[[ "$(cat "$log")" == *$'"'"'\x1b[?1049l'"'"'*"✔ Old installers"* ]]'
   (sleep 2; printf '\003'; sleep 2) |
     HOME="$FH" TERM=xterm-256color script -q "$log" "$BIN" --apply --only downloads >/dev/null 2>&1
   check "TUI: Ctrl-C restores the screen and cursor" 'grep -q $'"'"'\x1b\[?1049l'"'"' "$log" && grep -q $'"'"'\x1b\[?25h'"'"' "$log"'

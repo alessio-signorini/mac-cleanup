@@ -40,7 +40,7 @@ safe_remove() {  # remove a path entirely
 safe_clear_children() {
   local dir="$1" label="$2" c n k tot=0 kept="" list
   [ -d "$dir" ] || return 0
-  list=$(mc_listfile)
+  mc_listfile; list="$LIST_FILE"
   for c in "$dir"/* "$dir"/.[!.]*; do
     [ -e "$c" ] || continue
     n="${c##*/}"
@@ -83,11 +83,12 @@ report_top() {
   done < <(du -skx "$dir"/* "$dir"/.[!.]* 2>/dev/null | sort -rn | head -"$n")
 }
 
+# Sets LIST_FILE to a new, empty list file. Never call it as $(mc_listfile): the counter
+# would only advance in the subshell and every item would share (and overwrite) one file.
 mc_listfile() {
   LIST_SEQ=$((LIST_SEQ + 1))
-  local f="$MC_TMP/list.$LIST_SEQ"
-  : > "$f"
-  printf '%s' "$f"
+  LIST_FILE="$MC_TMP/list.$LIST_SEQ"
+  : > "$LIST_FILE"
 }
 
 # ---- queries used by the runner
@@ -132,4 +133,19 @@ item_size() {   # display size of item $1
   if [ -n "${IT_SZ[$1]}" ]; then printf '%s' "${IT_SZ[$1]}"
   elif [ "${IT_KB[$1]}" -gt 0 ]; then hkb "${IT_KB[$1]}"
   else printf -- "-"; fi
+}
+
+# Writes "KB<TAB>path" for every item still on disk (not applied successfully) to file $1:
+# space the modules already listed and the user kept. List items (@file) use their first path.
+plan_covered() {
+  local i n=${#IT_MOD[@]} p
+  : > "$1"
+  for ((i=0; i<n; i++)); do
+    [ "${IT_RES[$i]}" = ok ] && continue
+    [ "${IT_KB[$i]}" -gt 0 ] || continue
+    p="${IT_MEAS[$i]}"; [ -n "$p" ] || p="${IT_ID[$i]}"
+    case "$p" in @*) [ -f "${p#@}" ] || continue; p=$(head -1 "${p#@}") ;; esac
+    case "$p" in /*) printf '%s\t%s\n' "${IT_KB[$i]}" "${p%/}" >> "$1" ;; esac
+  done
+  return 0
 }

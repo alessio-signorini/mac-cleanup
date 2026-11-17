@@ -6,19 +6,22 @@
 # PK_SUB, PK_CONFIRM, then calls `picker`. Returns 0 = confirmed (PK_SEL updated),
 # 1 = skipped/quit.
 
-PK_TYPE=(); PK_TEXT=(); PK_SIZE=(); PK_KB=(); PK_SEL=(); PK_TIER=()
+PK_TYPE=(); PK_TEXT=(); PK_SIZE=(); PK_KB=(); PK_SEL=(); PK_TIER=(); PK_ST=()
 PK_NKIND=(); PK_NTEXT=()
 PK_TITLE=""; PK_SUB=""; PK_CONFIRM=false; PK_QUIT_LABEL="skip"
 PK_CUR=0; PK_TOP=0; PK_ASK=""; PK_HELP=false
+# Live apply inside the picker: PK_ST[row] = ""|run|ok|fail, footer lines replace selection/help.
+PK_APPLYING=false; PK_FOOT1=""; PK_FOOT2=""
 TUI_ON=false; TUI_STTY=""
 
 pk_reset() {
-  PK_TYPE=(); PK_TEXT=(); PK_SIZE=(); PK_KB=(); PK_SEL=(); PK_TIER=()
+  PK_TYPE=(); PK_TEXT=(); PK_SIZE=(); PK_KB=(); PK_SEL=(); PK_TIER=(); PK_ST=()
   PK_NKIND=(); PK_NTEXT=(); PK_TITLE=""; PK_SUB=""; PK_CONFIRM=false
   PK_QUIT_LABEL="skip"; PK_ASK=""; PK_HELP=false
+  PK_APPLYING=false; PK_FOOT1=""; PK_FOOT2=""
 }
-pk_header() { PK_TYPE+=(h); PK_TEXT+=("$1"); PK_SIZE+=(""); PK_KB+=(0); PK_SEL+=(0); PK_TIER+=(""); }
-pk_row()    { PK_TYPE+=(i); PK_TEXT+=("$1"); PK_SIZE+=("$2"); PK_KB+=("${3:-0}"); PK_SEL+=("${4:-0}"); PK_TIER+=("${5:-}"); }
+pk_header() { PK_TYPE+=(h); PK_TEXT+=("$1"); PK_SIZE+=(""); PK_KB+=(0); PK_SEL+=(0); PK_TIER+=(""); PK_ST+=(""); }
+pk_row()    { PK_TYPE+=(i); PK_TEXT+=("$1"); PK_SIZE+=("$2"); PK_KB+=("${3:-0}"); PK_SEL+=("${4:-0}"); PK_TIER+=("${5:-}"); PK_ST+=(""); }
 pk_note()   { PK_NKIND+=("$1"); PK_NTEXT+=("$2"); }
 
 picker() { if $TUI; then pk_tui; else pk_text; fi; }
@@ -103,6 +106,7 @@ pk_text() {
 
 # ------------------------------------------------------------------ TUI
 tui_enter() {
+  $TUI_ON && return 0
   TUI_STTY=$(stty -g < /dev/tty 2>/dev/null)
   stty -echo -icanon < /dev/tty 2>/dev/null
   { tput smcup; tput civis; } > /dev/tty 2>/dev/null
@@ -115,6 +119,9 @@ tui_leave() {
   { tput cnorm; tput rmcup; } > /dev/tty 2>/dev/null
   TUI_ON=false
 }
+
+# Picker finished: leave the alternate screen unless the apply phase holds it.
+pk_close() { $TUI_HOLD || tui_leave; }
 
 # Reads one key from the terminal into KEY.
 pk_key() {
@@ -203,16 +210,28 @@ pk_draw() {
     local box=" " tier="${PK_TIER[$i]}" tc=""
     [ "${PK_SEL[$i]}" = 1 ] && box="x"
     case "$tier" in safe) tc="$GRN" ;; pick) tc="$YLW" ;; esac
-    printf -v line ' [%s] %8s  %s%-4s%s  %s' "$box" "${PK_SIZE[$i]}" "$tc" "$tier" "$RST" "${PK_TEXT[$i]:0:$lw}"
-    if [ "$i" -eq "$PK_CUR" ]; then
-      printf -v line '%s›[%s] %8s  %-4s  %s%s' "$REV" "$box" "${PK_SIZE[$i]}" "$tier" "${PK_TEXT[$i]:0:$lw}" "$RST"
-    fi
+    case "${PK_ST[$i]}" in
+      run)  printf -v line '%s›[%s] %8s  busy  %s%s' "$RED$BOLD" "$box" "${PK_SIZE[$i]}" "${PK_TEXT[$i]:0:$lw}" "$RST" ;;
+      ok)   printf -v line '%s [-] %8s  gone  %s%s%s' "$RED$DIM" "${PK_SIZE[$i]}" "$STRIKE" "${PK_TEXT[$i]:0:$lw}" "$RST" ;;
+      fail) printf -v line '%s [!] %8s  FAIL  %s%s' "$YLW$BOLD" "${PK_SIZE[$i]}" "${PK_TEXT[$i]:0:$lw}" "$RST" ;;
+      *)
+        printf -v line ' [%s] %8s  %s%-4s%s  %s' "$box" "${PK_SIZE[$i]}" "$tc" "$tier" "$RST" "${PK_TEXT[$i]:0:$lw}"
+        if [ "$i" -eq "$PK_CUR" ] && ! $PK_APPLYING; then
+          printf -v line '%s›[%s] %8s  %-4s  %s%s' "$REV" "$box" "${PK_SIZE[$i]}" "$tier" "${PK_TEXT[$i]:0:$lw}" "$RST"
+        fi ;;
+    esac
     out+="$line"$'\033[K\n'
   done
-  pk_sel_summary
   local more=""
   [ "$end" -lt "$n" ] && more="  ↓ more"
   [ "$PK_TOP" -gt 0 ] && more="$more  ↑ more"
+  if $PK_APPLYING; then
+    out+=$'\033[K\n'" $PK_FOOT1$DIM$more$RST"$'\033[K\n'" $DIM${PK_FOOT2:0:$((cols-2))}$RST"$'\033[K'
+    out+=$'\033[J'
+    printf '%s' "$out" > /dev/tty
+    return 0
+  fi
+  pk_sel_summary
   printf -v line ' %sselected: %d item(s), %s%s%s' "$BOLD" "$PK_SELN" "$(hkb "$PK_SELKB")" "$RST" "$DIM$more$RST"
   out+=$'\033[K\n'"$line"$'\033[K\n'
   if [ -n "$PK_ASK" ]; then
@@ -254,8 +273,8 @@ pk_tui() {
           pk_draw; pk_key; PK_ASK=""
           [ "$KEY" = yes ] || continue
         fi
-        tui_leave; return 0 ;;
-      quit) tui_leave; return 1 ;;
+        pk_close; return 0 ;;
+      quit) pk_close; return 1 ;;
     esac
   done
 }

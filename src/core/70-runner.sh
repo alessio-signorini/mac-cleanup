@@ -47,12 +47,21 @@ disk_banner() {
   return 0
 }
 
+# scan_all [report]. Default: every module, except that report modules are deferred when
+# applying (they describe disk usage, so they're measured after deleting). "report": only those.
 scan_all() {
-  local i n=${#MODS[@]}
-  for ((i=0; i<n; i++)); do
+  local i k=0 n idx=()
+  for ((i=0; i<${#MODS[@]}; i++)); do
+    if [ "${1:-}" = report ]; then [ "${MD_REPORT[$i]}" = 1 ] || continue
+    elif $APPLY && [ "${MD_REPORT[$i]}" = 1 ]; then continue; fi
+    idx+=("$i")
+  done
+  n=${#idx[@]}
+  for i in "${idx[@]}"; do
+    k=$((k + 1))
     MOD_CUR="${MODS[$i]}"; GRP_CUR=""
     GRP_SEQ=$((GRP_SEQ + 1))
-    progress "$(printf 'Scanning %2d/%d  %s…' $((i + 1)) "$n" "${MD_TITLE[$i]}")"
+    progress "$(printf 'Scanning %2d/%d  %s…' "$k" "$n" "${MD_TITLE[$i]}")"
     "${MOD_CUR}_scan"
   done
   progress_done
@@ -128,15 +137,31 @@ print_report_modules() {
 }
 
 # ------------------------------------------------------------------ apply
+RV_MOD=""; RV_ROW=()   # module last shown in the item picker; RV_ROW[item] = picker row
+
+# Live apply in the item picker that was just confirmed: rows turn busy → gone/FAIL in place,
+# the footer shows a progress bar, the count, freed so far and the current item.
+ap_foot() {   # ap_foot K TOT FREED_KB LABEL
+  local w=24 fill
+  fill=$(( $1 * w / $2 ))
+  printf -v PK_FOOT1 '%sDeleting%s [%s%*s] %d/%d · freed %s' "$BOLD" "$RST" \
+    "$(printf '%*s' "$fill" '' | tr ' ' '#')" $((w - fill)) '' "$1" "$2" "$(hkb "$3")"
+  PK_FOOT2="$4"
+}
+
 apply_module() {   # apply_module INDEX  (applies items with IT_SEL=1)
-  local mi="$1" m="${MODS[$1]}" i before after freed k=0 tot=0 res
+  local mi="$1" m="${MODS[$1]}" i before after freed k=0 tot=0 res live=false row
   mod_items "$m"
   for i in "${ORD[@]}"; do [ "${IT_SEL[$i]}" = 1 ] && tot=$((tot + 1)); done
+  $TUI_HOLD && [ "$RV_MOD" = "$m" ] && { live=true; PK_APPLYING=true; }
   for i in "${ORD[@]}"; do
     [ "${IT_SEL[$i]}" = 1 ] || continue
     $MC_INTERRUPTED && break
     k=$((k + 1))
-    progress "$(printf '  applying %d/%d  %s…' "$k" "$tot" "${IT_LABEL[$i]:0:60}")"
+    if $live; then
+      row="${RV_ROW[$i]}"; PK_ST[row]=run; PK_CUR=$row
+      ap_foot $((k - 1)) "$tot" "${MD_FREED[$mi]}" "${IT_LABEL[$i]}"; pk_draw
+    else progress "$(printf '  applying %d/%d  %s…' "$k" "$tot" "${IT_LABEL[$i]:0:60}")"; fi
     before="${IT_KB[$i]}"
     [ -n "${IT_MEAS[$i]}" ] && before=$(kb_meas "${IT_MEAS[$i]}")
     if "${IT_ACT[$i]}" "${IT_ID[$i]}" >> "$MC_TMP/actions.log" 2>&1; then
@@ -150,15 +175,21 @@ apply_module() {   # apply_module INDEX  (applies items with IT_SEL=1)
       MD_FAILN[mi]=$((MD_FAILN[mi] + 1))
     fi
     IT_RES[i]=$res
+    $live && PK_ST[row]=$res
     MD_FREED[mi]=$((MD_FREED[mi] + freed)); TOTAL_FREED=$((TOTAL_FREED + freed))
     mc_log "$m  $res  $(hkb "$freed")  ${IT_LABEL[$i]}  [${IT_ID[$i]}]"
     if $VERBOSE; then
       progress_done
-      if [ "$res" = ok ]; then printf '      %s✔%s %8s  %s\n' "$GRN" "$RST" "$(hkb "$freed")" "${IT_LABEL[$i]}"
-      else printf '      %s✘%s %8s  %s\n' "$RED" "$RST" "" "${IT_LABEL[$i]}"; fi
+      if [ "$res" = ok ]; then emit "$(printf '      %s✔%s %8s  %s' "$GRN" "$RST" "$(hkb "$freed")" "${IT_LABEL[$i]}")"
+      else emit "$(printf '      %s✘%s %8s  %s' "$RED" "$RST" "" "${IT_LABEL[$i]}")"; fi
     fi
   done
   progress_done
+  if $live; then
+    ap_foot "$k" "$tot" "${MD_FREED[$mi]}" "done"; pk_draw
+    sleep 1   # let the finished list register before the next screen
+    PK_APPLYING=false
+  fi
   MD_STATE[mi]=applied
 }
 
@@ -187,6 +218,7 @@ result_line() {   # one line per module after apply/skip
 review_module() {
   local mi="$1" m="${MODS[$1]}" i g="" j=0
   local rowmap=()
+  RV_MOD=""; RV_ROW=()
   mod_items "$m"; mod_sums "$m"
   pk_reset
   PK_TITLE="${MD_TITLE[$mi]}"
@@ -206,8 +238,9 @@ review_module() {
   picker || return 1
   for ((j=0; j<${#rowmap[@]}; j++)); do
     i=${rowmap[$j]}
-    [ "$i" -ge 0 ] && IT_SEL[i]=${PK_SEL[$j]}
+    [ "$i" -ge 0 ] && { IT_SEL[i]=${PK_SEL[$j]}; RV_ROW[i]=$j; }
   done
+  RV_MOD="$m"
   return 0
 }
 
@@ -239,6 +272,9 @@ run_apply() {
   local i quit=false empty="" nsel j
   hdr "RESULTS"
   if ! $ASSUME_YES && $TUI; then
+    # One alternate-screen session for the whole review+apply; results print when it ends.
+    TUI_HOLD=true
+    tui_enter
     choose_modules || quit=true
   fi
   for ((i=0; i<${#MODS[@]}; i++)); do
@@ -247,23 +283,32 @@ run_apply() {
     mod_sums "${MODS[$i]}"
     if [ "$MS_N" -eq 0 ]; then
       MD_STATE[i]=empty
-      if mod_has_kind "${MODS[$i]}" warn; then result_line "$i"; $VERBOSE || print_notes "${MODS[$i]}" '^warn$'
+      if mod_has_kind "${MODS[$i]}" warn; then
+        emit "$(result_line "$i"; $VERBOSE || print_notes "${MODS[$i]}" '^warn$')"
       else empty="$empty, ${MD_TITLE[$i]}"; fi
       continue
     fi
-    if $quit; then MD_STATE[i]=skipped; result_line "$i"; continue; fi
-    if [ "${MD_STATE[$i]}" = skipped ]; then result_line "$i"; continue; fi
+    if $quit; then MD_STATE[i]=skipped; emit "$(result_line "$i")"; continue; fi
+    if [ "${MD_STATE[$i]}" = skipped ]; then emit "$(result_line "$i")"; continue; fi
     if ! $ASSUME_YES; then
-      if ! review_module "$i"; then MD_STATE[i]=skipped; result_line "$i"; continue; fi
+      if ! review_module "$i"; then MD_STATE[i]=skipped; emit "$(result_line "$i")"; continue; fi
     fi
     mod_items "${MODS[$i]}"; nsel=0
     for j in "${ORD[@]}"; do [ "${IT_SEL[$j]}" = 1 ] && nsel=$((nsel + 1)); done
-    if [ "$nsel" -eq 0 ]; then MD_STATE[i]=skipped; result_line "$i"; continue; fi
+    if [ "$nsel" -eq 0 ]; then MD_STATE[i]=skipped; emit "$(result_line "$i")"; continue; fi
     apply_module "$i"
-    result_line "$i"
+    emit "$(result_line "$i")"
   done
+  tui_release
   [ -n "$empty" ] && ! $QUIET && printf '  %s· nothing to clean: %s%s\n' "$DIM" "${empty#, }" "$RST"
   return 0
+}
+
+# Ends the apply-phase alternate-screen session and prints the buffered result lines.
+tui_release() {
+  TUI_HOLD=false
+  tui_leave
+  emit_flush
 }
 
 summary() {
@@ -286,10 +331,10 @@ summary() {
 
 mc_on_interrupt() {
   MC_INTERRUPTED=true
-  tui_leave
+  tui_release
   progress_done
   printf '\n%sinterrupted%s\n' "$YLW" "$RST"
-  [ "${MC_PHASE:-}" = apply ] && summary
+  case "${MC_PHASE:-}" in apply|report) summary ;; esac
   exit 130
 }
 
@@ -316,6 +361,37 @@ mc_run() {
   mc_log "run start: $MC_VERSION modules=${MODS[*]} yes=$ASSUME_YES days=$DAYS media-days=$MEDIA_DAYS"
   MC_PHASE=apply
   run_apply
-  $QUIET || print_report_modules
+  MC_PHASE=report
+  if ! $QUIET && want_report; then
+    scan_all report
+    print_report_modules
+  fi
   summary
+}
+
+# After applying: run report modules if named explicitly (--only/positional), or if the user
+# answers y to a 10s prompt. Never in non-interactive runs (they'd only add waiting).
+want_report() {
+  local i titles="" m
+  for ((i=0; i<${#MODS[@]}; i++)); do
+    [ "${MD_REPORT[$i]}" = 1 ] || continue
+    m="${MODS[$i]}"
+    [ -n "$ONLY" ] && in_list "$m" "$ONLY" && return 0
+    titles="$titles, ${MD_TITLE[$i]}"
+  done
+  [ -n "$titles" ] || return 1
+  [ -t 0 ] && $IS_TTY && [ -r /dev/tty ] || return 1
+  ask_timed "Scan \"${titles#, }\" now? (takes a while)" 10
+}
+
+ask_timed() {   # ask_timed QUESTION SECONDS — 0 only if the user presses y before the timeout
+  local s="$2" k=""
+  while [ "$s" -gt 0 ]; do
+    printf '\r\033[K  %s?%s %s [y/N] %s%ds%s ' "$YLW" "$RST" "$1" "$DIM" "$s" "$RST" > /dev/tty
+    IFS= read -rsn1 -t 1 k < /dev/tty && break
+    s=$((s - 1))
+  done
+  printf '\r\033[K' > /dev/tty
+  case "$k" in y|Y) return 0 ;; esac
+  return 1
 }
