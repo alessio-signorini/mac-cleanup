@@ -1,22 +1,8 @@
 # 🧹 mac-cleanup
 
-![screenshot](docs/screenshot.png)
-
 `mac-cleanup` scans 19 areas of my Mac (caches, WhatsApp, Docker, Xcode, editors, Claude, dev toolchains, …), shows what can be freed, and lets you review each area in a checkbox list before anything is deleted. It's a single bash file and needs nothing beyond what ships with macOS.
 
-```
-mac-cleanup 3.0.0 — Disk: 144Gi used of 228Gi, 56Gi free (72%)
-
-== RESULTS ==
-  ✔ Caches & logs                freed 425.6MB  (6 item(s))
-  ✔ WhatsApp                     freed 5.5GB  (3 item(s))
-  – Xcode & simulators           skipped  (safe 3.9GB · review 18.2GB)
-  ✔ Docker / colima              freed 836MB  (2 item(s))
-  · nothing to clean: Browsers, GIMP, iOS device backups
-
-== SUMMARY ==
-  freed ≈ 6.7GB   (free space change: +6.5GB; APFS may take a minute to report)
-```
+![screenshot](docs/screenshot.png)
 
 ## Features
 
@@ -58,6 +44,22 @@ mac-cleanup --list               # list modules
 
 All options, picker keys, the non-interactive mode and the safety tiers are described in
 [docs/USAGE.md](docs/USAGE.md).
+
+## Sample Output
+
+```
+mac-cleanup 3.0.0 — Disk: 144Gi used of 228Gi, 56Gi free (72%)
+
+== RESULTS ==
+  ✔ Caches & logs                freed 425.6MB  (6 item(s))
+  ✔ WhatsApp                     freed 5.5GB  (3 item(s))
+  – Xcode & simulators           skipped  (safe 3.9GB · review 18.2GB)
+  ✔ Docker / colima              freed 836MB  (2 item(s))
+  · nothing to clean: Browsers, GIMP, iOS device backups
+
+== SUMMARY ==
+  freed ≈ 6.7GB   (free space change: +6.5GB; APFS may take a minute to report)
+```
 
 ## What it cleans
 
